@@ -21,10 +21,14 @@ for lr in $LR_GRID; do
 
   echo "Running notebook-compatible IITB LR=$lr -> $output_dir"
 
-  if [[ "$UPLOAD_GRID_RUNS" == "1" ]]; then
-    LR="$lr" OUTPUT_DIR="$output_dir" bash "$TRAIN_SCRIPT"
+  if [[ -f "$output_dir/metrics_best.json" ]]; then
+    echo "Reusing completed LR=$lr from $output_dir"
   else
-    LR="$lr" OUTPUT_DIR="$output_dir" HF_MODEL_REPO="" bash "$TRAIN_SCRIPT"
+    if [[ "$UPLOAD_GRID_RUNS" == "1" ]]; then
+      LR="$lr" OUTPUT_DIR="$output_dir" bash "$TRAIN_SCRIPT"
+    else
+      LR="$lr" OUTPUT_DIR="$output_dir" HF_MODEL_REPO="" bash "$TRAIN_SCRIPT"
+    fi
   fi
 
   python -c '

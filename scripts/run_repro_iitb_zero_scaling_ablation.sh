@@ -98,10 +98,14 @@ for variant in preserve_zero_rows scale_zero_rows; do
 
   echo "Running notebook-compatible zero-scaling variant=$variant -> $output_dir"
 
-  if [[ "$UPLOAD_ABLATION_RUNS" == "1" ]]; then
-    IITB_CSV="$iitb_csv" OUTPUT_DIR="$output_dir" bash "$TRAIN_SCRIPT"
+  if [[ -f "$output_dir/metrics_best.json" ]]; then
+    echo "Reusing completed zero-scaling variant=$variant from $output_dir"
   else
-    IITB_CSV="$iitb_csv" OUTPUT_DIR="$output_dir" HF_MODEL_REPO="" bash "$TRAIN_SCRIPT"
+    if [[ "$UPLOAD_ABLATION_RUNS" == "1" ]]; then
+      IITB_CSV="$iitb_csv" OUTPUT_DIR="$output_dir" bash "$TRAIN_SCRIPT"
+    else
+      IITB_CSV="$iitb_csv" OUTPUT_DIR="$output_dir" HF_MODEL_REPO="" bash "$TRAIN_SCRIPT"
+    fi
   fi
 
   python -c '
