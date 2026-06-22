@@ -80,3 +80,38 @@ After downloading `roberta-base`, run the real Hugging Face backend smoke:
 hf download roberta-base
 bash emotion_et_prediction/scripts/smoke_run_roberta.sh
 ```
+
+## Package the Hugging Face Model
+
+After the notebook-compatible IITB run finishes, package the best LR run into a
+self-contained Hugging Face upload folder:
+
+```bash
+RUN_DIR=emotion_et_prediction/runs/repro_main_20260622_121533 \
+OUTPUT_DIR=emotion_et_prediction/hf_emotion_et_iitb_lr5e5 \
+ZIP_PATH=emotion_et_prediction/hf_emotion_et_iitb_lr5e5_upload.zip \
+LOCAL_FILES_ONLY=1 \
+bash emotion_et_prediction/scripts/package_hf_model.sh
+```
+
+The package includes:
+
+```text
+model.py
+config.json
+tokenizer.json
+tokenizer_config.json
+vocab.json
+merges.txt
+special_tokens_map.json
+et_predictor2_iitb_lr5e5_seed42.safetensors
+metrics_best.json
+lr_grid_summary.tsv
+manifest.env
+README.md
+.gitattributes
+```
+
+Upload the contents of `OUTPUT_DIR` to the Hugging Face model repo. If using the
+zip, unzip it first and upload the files inside it rather than uploading the zip
+as a single model artifact.
