@@ -1,0 +1,6 @@
+pandas>=2.0
+numpy>=1.24
+torch>=2.2
+transformers>=4.40
+huggingface_hub>=0.24
+safetensors>=0.4
