@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LR_GRID="${LR_GRID:-1e-5 2e-5 5e-5}"
+RUN_ROOT="${RUN_ROOT:-emotion_et_prediction/runs/lr_grid}"
+UPLOAD_GRID_RUNS="${UPLOAD_GRID_RUNS:-0}"
+
+PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK_DIR="$(dirname "$PACKAGE_DIR")"
+TRAIN_SCRIPT="$PACKAGE_DIR/scripts/train_cmcl_to_iitb.sh"
+cd "$WORK_DIR"
+
+mkdir -p "$RUN_ROOT"
+SUMMARY_PATH="$RUN_ROOT/summary.tsv"
+printf "lr\tbest_epoch\tselected_metric\tselected_score\tnFix\tFFD\tGPT\tTRT\tfixProp\tall\toutput_dir\n" > "$SUMMARY_PATH"
+
+for lr in $LR_GRID; do
+  safe_lr="${lr//./p}"
+  safe_lr="${safe_lr//-/_}"
+  output_dir="$RUN_ROOT/lr_${safe_lr}"
+
+  echo "Running LR=$lr -> $output_dir"
+
+  if [[ "$UPLOAD_GRID_RUNS" == "1" ]]; then
+    LR="$lr" OUTPUT_DIR="$output_dir" bash "$TRAIN_SCRIPT"
+  else
+    LR="$lr" OUTPUT_DIR="$output_dir" HF_MODEL_REPO="" bash "$TRAIN_SCRIPT"
+  fi
+
+  python -c '
+import json
+import sys
+from pathlib import Path
+
+metrics_path = Path(sys.argv[1])
+lr = sys.argv[2]
+output_dir = sys.argv[3]
+payload = json.loads(metrics_path.read_text())
+mae = payload["valid_mae"]
+score = payload["selected_score"]
+nfix = mae["nFix"]
+ffd = mae["FFD"]
+gpt = mae["GPT"]
+trt = mae["TRT"]
+fixprop = mae["fixProp"]
+all_mae = mae["all"]
+fields = [
+    lr,
+    str(payload["epoch"]),
+    payload["selected_metric"],
+    f"{score:.6f}",
+    f"{nfix:.6f}",
+    f"{ffd:.6f}",
+    f"{gpt:.6f}",
+    f"{trt:.6f}",
+    f"{fixprop:.6f}",
+    f"{all_mae:.6f}",
+    output_dir,
+]
+print("\t".join(fields))
+' "$output_dir/metrics_best.json" "$lr" "$output_dir" >> "$SUMMARY_PATH"
+done
+
+echo "Saved LR grid summary to $SUMMARY_PATH"

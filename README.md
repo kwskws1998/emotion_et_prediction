@@ -57,10 +57,16 @@ python -m emotion_et_prediction.emotion_et.train_et \
   --finetune-csv emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv \
   --output-dir emotion_et_prediction/runs/cmcl_to_iitb_roberta \
   --pretrain-epochs 100 \
-  --finetune-epochs 20 \
+  --finetune-epochs 150 \
   --batch-size 16 \
-  --lr 5e-5
+  --lr 5e-5 \
+  --best-metric all
 ```
+
+Training writes `checkpoint_best.pt`, `checkpoint_last.pt`, and `checkpoint.pt`.
+`checkpoint.pt` is an alias of the best validation checkpoint. Use
+`--best-metric TRT` when TRT MAE should choose the best checkpoint instead of
+the mean `all` MAE.
 
 Use the tiny backend only for local smoke tests when `roberta-base` is not cached.
 

@@ -127,13 +127,18 @@ uploads the output directory to the Hugging Face model repo.
 
 ```bash
 PRETRAIN_EPOCHS=100 \
-FINETUNE_EPOCHS=20 \
+FINETUNE_EPOCHS=150 \
 BATCH_SIZE=16 \
 MAX_LENGTH=256 \
 DEVICE=cuda \
+BEST_METRIC=all \
 HF_MODEL_REPO=<hf-user>/emotion-et-predictor-roberta \
 bash emotion_et_prediction/scripts/train_cmcl_to_iitb.sh
 ```
+
+The run saves `checkpoint_best.pt`, `checkpoint_last.pt`, and `checkpoint.pt`.
+`checkpoint.pt` points to the best validation checkpoint. Set `BEST_METRIC=TRT`
+if TRT MAE should select the best checkpoint.
 
 For a cheap server smoke run:
 

@@ -5,11 +5,12 @@ MODEL_NAME="${MODEL_NAME:-roberta-base}"
 IITB_CSV="${IITB_CSV:-emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv}"
 OUTPUT_DIR="${OUTPUT_DIR:-emotion_et_prediction/runs/cmcl_to_iitb_roberta}"
 PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-100}"
-FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-20}"
+FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-150}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 LR="${LR:-5e-5}"
 MAX_LENGTH="${MAX_LENGTH:-256}"
 DEVICE="${DEVICE:-auto}"
+BEST_METRIC="${BEST_METRIC:-all}"
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
@@ -27,7 +28,8 @@ python -m emotion_et_prediction.emotion_et.train_et \
   --batch-size "$BATCH_SIZE" \
   --lr "$LR" \
   --max-length "$MAX_LENGTH" \
-  --device "$DEVICE"
+  --device "$DEVICE" \
+  --best-metric "$BEST_METRIC"
 
 if [[ -n "${HF_MODEL_REPO:-}" ]]; then
   hf upload "$HF_MODEL_REPO" "$OUTPUT_DIR" . --type model \

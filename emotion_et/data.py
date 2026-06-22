@@ -61,7 +61,7 @@ def split_by_sentence(
     seed: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     clean = renumber_sentences(df)
-    sentence_ids = clean["sentence_id"].drop_duplicates().to_numpy()
+    sentence_ids = clean["sentence_id"].drop_duplicates().to_numpy(copy=True)
     rng = np.random.default_rng(seed)
     rng.shuffle(sentence_ids)
     valid_size = max(1, int(round(len(sentence_ids) * valid_ratio)))
@@ -195,4 +195,3 @@ def collate_et_batch(batch: list[dict[str, torch.Tensor]], pad_id: int = 0) -> d
         "attention_mask": attention_mask,
         "features": features,
     }
-

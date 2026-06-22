@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -61,6 +62,88 @@ def compute_mae(predictions: np.ndarray, targets: np.ndarray) -> dict[str, float
     }
     values["all"] = float(np.mean([values[feature] for feature in FEATURE_NAMES]))
     return values
+
+
+def serialize_args(args: argparse.Namespace) -> dict[str, object]:
+    serialized: dict[str, object] = {}
+    for key, value in vars(args).items():
+        if isinstance(value, Path):
+            serialized[key] = str(value)
+        elif isinstance(value, list):
+            serialized[key] = [str(item) if isinstance(item, Path) else item for item in value]
+        else:
+            serialized[key] = value
+    return serialized
+
+
+def metric_score(metrics: dict[str, float], metric_name: str) -> float:
+    if metric_name not in metrics:
+        raise ValueError(f"Metric '{metric_name}' is not available in {sorted(metrics)}.")
+    return float(metrics[metric_name])
+
+
+def checkpoint_payload(
+    model: torch.nn.Module,
+    vocab: SimpleVocab | None,
+    args: argparse.Namespace,
+    stage: str,
+    epoch: int,
+    valid_mae: dict[str, float],
+    selected_metric: str,
+) -> dict[str, object]:
+    return {
+        "state_dict": model.state_dict(),
+        "backend": args.backend,
+        "model_name": args.model_name,
+        "feature_names": FEATURE_NAMES,
+        "vocab": vocab.token_to_id if vocab is not None else None,
+        "args": serialize_args(args),
+        "stage": stage,
+        "epoch": epoch,
+        "valid_mae": valid_mae,
+        "selected_metric": selected_metric,
+        "selected_score": metric_score(valid_mae, selected_metric),
+    }
+
+
+def save_checkpoint(
+    path: Path,
+    model: torch.nn.Module,
+    vocab: SimpleVocab | None,
+    args: argparse.Namespace,
+    stage: str,
+    epoch: int,
+    valid_mae: dict[str, float],
+) -> None:
+    torch.save(
+        checkpoint_payload(
+            model=model,
+            vocab=vocab,
+            args=args,
+            stage=stage,
+            epoch=epoch,
+            valid_mae=valid_mae,
+            selected_metric=args.best_metric,
+        ),
+        path,
+    )
+
+
+def write_metrics_json(
+    path: Path,
+    stage: str,
+    epoch: int,
+    valid_mae: dict[str, float],
+    selected_metric: str,
+) -> None:
+    payload = {
+        "stage": stage,
+        "epoch": epoch,
+        "selected_metric": selected_metric,
+        "selected_score": metric_score(valid_mae, selected_metric),
+        "valid_mae": valid_mae,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def make_loader(
@@ -130,7 +213,7 @@ def evaluate(
         predictions = model(input_ids=input_ids, attention_mask=attention_mask)
         mask = target_mask(targets)
         if mask.any():
-            all_predictions.append(predictions[mask].detach().cpu().numpy())
+            all_predictions.append(predictions[mask].clamp_min(0.0).detach().cpu().numpy())
             all_targets.append(targets[mask].detach().cpu().numpy())
 
     if not all_predictions:
@@ -146,6 +229,7 @@ def run_stage(
     lr: float,
     label: str,
     valid_loader: torch.utils.data.DataLoader | None = None,
+    on_epoch_end=None,
 ) -> list[dict[str, object]]:
     optimizer = torch.optim.AdamW(
         [parameter for parameter in model.parameters() if parameter.requires_grad],
@@ -169,6 +253,8 @@ def run_stage(
                 f"[{label}] epoch {epoch}/{epochs} "
                 f"train_loss={train_loss:.4f} valid_mae={metrics['all']:.4f}"
             )
+        if on_epoch_end is not None:
+            on_epoch_end(log_row)
     return logs
 
 
@@ -224,6 +310,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--best-metric", choices=[*FEATURE_NAMES, "all"], default="all")
     parser.add_argument("--max-pretrain-sentences", type=int, default=None)
     parser.add_argument("--max-finetune-train-sentences", type=int, default=None)
     parser.add_argument("--max-valid-sentences", type=int, default=None)
@@ -311,6 +398,42 @@ def main() -> None:
         vocab=vocab,
         tokenizer=tokenizer,
     )
+    best_state: dict[str, object] = {
+        "score": float("inf"),
+        "epoch": None,
+        "metrics": None,
+    }
+
+    def save_best_if_needed(log_row: dict[str, object]) -> None:
+        metrics = log_row["valid_mae"]
+        if not isinstance(metrics, dict):
+            return
+        score = metric_score(metrics, args.best_metric)
+        if not np.isfinite(score):
+            return
+        if score < float(best_state["score"]):
+            epoch = int(log_row["epoch"])
+            best_state["score"] = score
+            best_state["epoch"] = epoch
+            best_state["metrics"] = metrics
+            save_checkpoint(
+                args.output_dir / "checkpoint_best.pt",
+                model=model,
+                vocab=vocab,
+                args=args,
+                stage="finetune",
+                epoch=epoch,
+                valid_mae=metrics,
+            )
+            write_metrics_json(
+                args.output_dir / "metrics_best.json",
+                stage="finetune",
+                epoch=epoch,
+                valid_mae=metrics,
+                selected_metric=args.best_metric,
+            )
+            print(f"[finetune] new best {args.best_metric}_mae={score:.4f} at epoch {epoch}")
+
     logs.extend(
         run_stage(
             model=model,
@@ -320,31 +443,62 @@ def main() -> None:
             lr=args.lr,
             label="finetune",
             valid_loader=valid_loader,
+            on_epoch_end=save_best_if_needed,
         )
     )
 
-    final_metrics = evaluate(model, valid_loader, device)
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "backend": args.backend,
-            "model_name": args.model_name,
-            "feature_names": FEATURE_NAMES,
-            "vocab": vocab.token_to_id if vocab is not None else None,
-            "args": vars(args),
-        },
-        args.output_dir / "checkpoint.pt",
+    last_metrics = evaluate(model, valid_loader, device)
+    save_checkpoint(
+        args.output_dir / "checkpoint_last.pt",
+        model=model,
+        vocab=vocab,
+        args=args,
+        stage="finetune",
+        epoch=args.finetune_epochs,
+        valid_mae=last_metrics,
     )
+    write_metrics_json(
+        args.output_dir / "metrics_last.json",
+        stage="finetune",
+        epoch=args.finetune_epochs,
+        valid_mae=last_metrics,
+        selected_metric=args.best_metric,
+    )
+
+    if best_state["metrics"] is None:
+        best_state["score"] = metric_score(last_metrics, args.best_metric)
+        best_state["epoch"] = args.finetune_epochs
+        best_state["metrics"] = last_metrics
+        save_checkpoint(
+            args.output_dir / "checkpoint_best.pt",
+            model=model,
+            vocab=vocab,
+            args=args,
+            stage="finetune",
+            epoch=args.finetune_epochs,
+            valid_mae=last_metrics,
+        )
+        write_metrics_json(
+            args.output_dir / "metrics_best.json",
+            stage="finetune",
+            epoch=args.finetune_epochs,
+            valid_mae=last_metrics,
+            selected_metric=args.best_metric,
+        )
+
+    shutil.copy2(args.output_dir / "checkpoint_best.pt", args.output_dir / "checkpoint.pt")
+    shutil.copy2(args.output_dir / "metrics_best.json", args.output_dir / "metrics.json")
     (args.output_dir / "train_log.json").write_text(
         json.dumps(logs, indent=2),
         encoding="utf-8",
     )
-    (args.output_dir / "metrics.json").write_text(
-        json.dumps(final_metrics, indent=2),
-        encoding="utf-8",
+    print(f"Last valid MAE: {last_metrics}")
+    print(
+        f"Best valid MAE by {args.best_metric}: "
+        f"{float(best_state['score']):.4f} at epoch {best_state['epoch']}"
     )
-    print(f"Final valid MAE: {final_metrics}")
-    print(f"Saved run to {args.output_dir}")
+    print(f"Saved best checkpoint to {args.output_dir / 'checkpoint_best.pt'}")
+    print(f"Saved last checkpoint to {args.output_dir / 'checkpoint_last.pt'}")
 
 
 if __name__ == "__main__":
