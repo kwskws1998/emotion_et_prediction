@@ -66,16 +66,21 @@ for variant, preserve_zero_rows, target_stats in variants:
     stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
 
     means = scaled_df[FEATURE_NAMES].mean()
+    nfix_mean = means["nFix"]
+    ffd_mean = means["FFD"]
+    gpt_mean = means["GPT"]
+    trt_mean = means["TRT"]
+    fixprop_mean = means["fixProp"]
     zero_rows = int(scaled_df[FEATURE_NAMES].eq(0.0).all(axis=1).sum())
     fields = [
         variant,
         str(len(scaled_df)),
         str(zero_rows),
-        f"{means['nFix']:.6f}",
-        f"{means['FFD']:.6f}",
-        f"{means['GPT']:.6f}",
-        f"{means['TRT']:.6f}",
-        f"{means['fixProp']:.6f}",
+        f"{nfix_mean:.6f}",
+        f"{ffd_mean:.6f}",
+        f"{gpt_mean:.6f}",
+        f"{trt_mean:.6f}",
+        f"{fixprop_mean:.6f}",
         str(csv_path),
     ]
     with summary_path.open("a", encoding="utf-8") as handle:
