@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 from pathlib import Path
 
@@ -123,6 +122,44 @@ def get_device(device_arg: str) -> torch.device:
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def renumber_dataframe(df: pd.DataFrame, offset: int = 0) -> pd.DataFrame:
+    clean = df.copy()
+    clean = clean.dropna(subset=["sentence_id", "word_id", "word", *FEATURE_NAMES])
+    clean = clean.sort_values(["sentence_id", "word_id"]).reset_index(drop=True)
+    sentence_ids = clean["sentence_id"].drop_duplicates().tolist()
+    id_map = {old_id: index + offset for index, old_id in enumerate(sentence_ids)}
+    clean["sentence_id"] = clean["sentence_id"].map(id_map).astype(int)
+    return clean
+
+
+def load_csvs(paths: list[Path]) -> pd.DataFrame:
+    frames = []
+    offset = 0
+    for path in paths:
+        frame = renumber_dataframe(pd.read_csv(path), offset=offset)
+        frames.append(frame)
+        offset += int(frame["sentence_id"].nunique())
+    if not frames:
+        raise ValueError("No CSV paths were provided.")
+    return pd.concat(frames, ignore_index=True)
+
+
+def split_by_sentence(
+    df: pd.DataFrame,
+    valid_ratio: float,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    clean = renumber_dataframe(df)
+    sentence_ids = clean["sentence_id"].drop_duplicates().to_numpy(copy=True)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(sentence_ids)
+    valid_size = max(1, int(round(len(sentence_ids) * valid_ratio)))
+    valid_ids = set(sentence_ids[:valid_size].tolist())
+    train_df = clean[~clean["sentence_id"].isin(valid_ids)]
+    valid_df = clean[clean["sentence_id"].isin(valid_ids)]
+    return renumber_dataframe(train_df), renumber_dataframe(valid_df)
 
 
 def compute_mae(predict_df: pd.DataFrame, truth_df: pd.DataFrame) -> dict[str, float]:
@@ -273,7 +310,7 @@ def write_metrics(path: Path, epoch: int, valid_mae: dict[str, float]) -> None:
 
 def train_one_seed(
     seed: int,
-    provo_df: pd.DataFrame,
+    pretrain_df: pd.DataFrame,
     train_df: pd.DataFrame,
     valid_df: pd.DataFrame,
     args: argparse.Namespace,
@@ -287,22 +324,22 @@ def train_one_seed(
     model = RobertaRegressionModel(model_name=args.model_name).to(device)
     log_provo: dict[str, list[object]] | None = None
     if args.provo_epochs > 0:
-        print(f"\nStage 1: Provo pretraining ({args.provo_epochs} epochs)", flush=True)
+        print(f"\nStage 1: {args.pretrain_label} pretraining ({args.provo_epochs} epochs)", flush=True)
         model, log_provo, _ = train_stage(
             model,
-            provo_df,
+            pretrain_df,
             num_epochs=args.provo_epochs,
             lr=args.lr,
             batch_size=args.batch_size,
             model_name=args.model_name,
             max_length=args.max_length,
             device=device,
-            stage_label="Provo",
+            stage_label=args.pretrain_label,
             valid_df=None,
             track_best=False,
         )
 
-    print(f"\nStage 2: ZuCo task finetuning ({args.task_epochs} epochs)", flush=True)
+    print(f"\nStage 2: {args.finetune_label} task finetuning ({args.task_epochs} epochs)", flush=True)
     model, log_zuco, best_mae = train_stage(
         model,
         train_df,
@@ -312,7 +349,7 @@ def train_one_seed(
         model_name=args.model_name,
         max_length=args.max_length,
         device=device,
-        stage_label="ZuCo",
+        stage_label=args.finetune_label,
         valid_df=valid_df,
         track_best=True,
     )
@@ -361,8 +398,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=str, default="42")
     parser.add_argument("--provo-csv", type=Path, default=Path("./provo.csv"))
+    parser.add_argument("--pretrain-csv", type=Path, action="append", default=[])
     parser.add_argument("--train-csv", type=Path, default=Path("./train.csv"))
-    parser.add_argument("--valid-csv", type=Path, default=Path("./valid.csv"))
+    parser.add_argument("--finetune-csv", type=Path, default=None)
+    parser.add_argument("--valid-csv", type=Path, default=None)
+    parser.add_argument("--valid-ratio", type=float, default=0.15)
+    parser.add_argument("--split-seed", type=int, default=42)
     parser.add_argument("--output-dir", type=Path, default=Path("./checkpoints"))
     parser.add_argument("--model-name", type=str, default="roberta-base")
     parser.add_argument("--provo-epochs", type=int, default=100)
@@ -371,6 +412,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("--pretrain-label", type=str, default="Provo")
+    parser.add_argument("--finetune-label", type=str, default="ZuCo")
     return parser.parse_args()
 
 
@@ -379,18 +422,28 @@ def main() -> None:
     seeds = [int(seed.strip()) for seed in args.seeds.split(",")]
     device = get_device(args.device)
 
-    provo_df = pd.read_csv(args.provo_csv)
-    train_df = pd.read_csv(args.train_csv)
-    valid_df = pd.read_csv(args.valid_csv)
+    pretrain_paths = args.pretrain_csv if args.pretrain_csv else [args.provo_csv]
+    train_source = args.finetune_csv if args.finetune_csv is not None else args.train_csv
+    pretrain_df = load_csvs(pretrain_paths)
+    finetune_df = renumber_dataframe(pd.read_csv(train_source))
+    if args.valid_csv is None:
+        train_df, valid_df = split_by_sentence(
+            finetune_df,
+            valid_ratio=args.valid_ratio,
+            seed=args.split_seed,
+        )
+    else:
+        train_df = finetune_df
+        valid_df = renumber_dataframe(pd.read_csv(args.valid_csv))
 
-    print(f"Train: {len(train_df)} words, Valid: {len(valid_df)} words, Provo: {len(provo_df)} words", flush=True)
+    print(f"Train: {len(train_df)} words, Valid: {len(valid_df)} words, Pretrain: {len(pretrain_df)} words", flush=True)
     print(f"Seeds: {seeds}", flush=True)
     print(f"Device: {device}", flush=True)
     print(f"Max length: {args.max_length}", flush=True)
 
     all_maes = {}
     for seed in seeds:
-        all_maes[seed] = train_one_seed(seed, provo_df, train_df, valid_df, args, device)
+        all_maes[seed] = train_one_seed(seed, pretrain_df, train_df, valid_df, args, device)
 
     print(f"\n{'=' * 60}", flush=True)
     print("Summary across seeds:", flush=True)
