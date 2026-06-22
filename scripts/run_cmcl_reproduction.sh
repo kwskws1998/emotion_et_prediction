@@ -10,30 +10,27 @@ PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-100}"
 FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-150}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 LR="${LR:-5e-5}"
-MAX_LENGTH="${MAX_LENGTH:-256}"
+REPRO_MAX_LENGTH="${REPRO_MAX_LENGTH:-512}"
 DEVICE="${DEVICE:-auto}"
-BEST_METRIC="${BEST_METRIC:-all}"
 SEED="${SEED:-42}"
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
 cd "$WORK_DIR"
 
-python -m emotion_et_prediction.emotion_et.train_et \
-  --backend hf \
+python -m emotion_et_prediction.emotion_et.reproduce_et2 \
+  --seeds "$SEED" \
   --model-name "$MODEL_NAME" \
-  --pretrain-csv "$PROVO_CSV" \
-  --finetune-csv "$TRAIN_CSV" \
+  --provo-csv "$PROVO_CSV" \
+  --train-csv "$TRAIN_CSV" \
   --valid-csv "$VALID_CSV" \
   --output-dir "$RUN_ROOT" \
-  --pretrain-epochs "$PRETRAIN_EPOCHS" \
-  --finetune-epochs "$FINETUNE_EPOCHS" \
+  --provo-epochs "$PRETRAIN_EPOCHS" \
+  --task-epochs "$FINETUNE_EPOCHS" \
   --batch-size "$BATCH_SIZE" \
   --lr "$LR" \
-  --max-length "$MAX_LENGTH" \
-  --device "$DEVICE" \
-  --best-metric "$BEST_METRIC" \
-  --seed "$SEED"
+  --max-length "$REPRO_MAX_LENGTH" \
+  --device "$DEVICE"
 
 python -c '
 import json
