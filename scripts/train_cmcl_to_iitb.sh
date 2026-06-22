@@ -11,6 +11,7 @@ LR="${LR:-5e-5}"
 MAX_LENGTH="${MAX_LENGTH:-256}"
 DEVICE="${DEVICE:-auto}"
 BEST_METRIC="${BEST_METRIC:-all}"
+SEED="${SEED:-42}"
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
@@ -29,7 +30,8 @@ python -m emotion_et_prediction.emotion_et.train_et \
   --lr "$LR" \
   --max-length "$MAX_LENGTH" \
   --device "$DEVICE" \
-  --best-metric "$BEST_METRIC"
+  --best-metric "$BEST_METRIC" \
+  --seed "$SEED"
 
 if [[ -n "${HF_MODEL_REPO:-}" ]]; then
   hf upload "$HF_MODEL_REPO" "$OUTPUT_DIR" . --type model \
