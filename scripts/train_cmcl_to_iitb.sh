@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODEL_NAME="${MODEL_NAME:-roberta-base}"
-IITB_CSV="${IITB_CSV:-emotion_et_prediction/artifacts/iitb_v2_cmcl_scaled.csv}"
+IITB_CSV="${IITB_CSV:-emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv}"
 OUTPUT_DIR="${OUTPUT_DIR:-emotion_et_prediction/runs/cmcl_to_iitb_roberta}"
 PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-100}"
 FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-20}"
@@ -11,11 +11,15 @@ LR="${LR:-5e-5}"
 MAX_LENGTH="${MAX_LENGTH:-256}"
 DEVICE="${DEVICE:-auto}"
 
+PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK_DIR="$(dirname "$PACKAGE_DIR")"
+cd "$WORK_DIR"
+
 python -m emotion_et_prediction.emotion_et.train_et \
   --backend hf \
   --model-name "$MODEL_NAME" \
-  --pretrain-csv data/cmcl/provo.csv \
-  --pretrain-csv data/cmcl/train_and_valid.csv \
+  --pretrain-csv emotion_et_prediction/data/pretrain_data/provo.csv \
+  --pretrain-csv emotion_et_prediction/data/pretrain_data/train_and_valid.csv \
   --finetune-csv "$IITB_CSV" \
   --output-dir "$OUTPUT_DIR" \
   --pretrain-epochs "$PRETRAIN_EPOCHS" \

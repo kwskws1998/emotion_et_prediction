@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT_DIR"
+PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-OUT_DIR="data/cmcl"
+OUT_DIR="$PACKAGE_DIR/data/pretrain_data"
 mkdir -p "$OUT_DIR"
 
 curl -L -s \
@@ -24,4 +23,3 @@ curl -L -s \
   -o "$OUT_DIR/valid.csv"
 
 echo "Saved CMCL data to $OUT_DIR"
-

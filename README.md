@@ -7,10 +7,11 @@ preprocessing added for emotion-domain ET fine-tuning.
 ## Data Roles
 
 - General ET pretrain:
-  - CMCL `data/provo.csv`
-  - CMCL `data/training_data/train_and_valid.csv`
+  - CMCL `data/pretrain_data/provo.csv`
+  - CMCL `data/pretrain_data/train_and_valid.csv`
+  - CMCL `data/pretrain_data/train.csv` and `data/pretrain_data/valid.csv` are also included for exact split inspection or alternate runs.
 - Emotion-domain fine-tune:
-  - IITB V2 converted to CMCL-style word-level ET labels
+  - `data/finetune_data/iitb_v2_cmcl_scaled.csv`
 
 The model target contract is:
 
@@ -27,7 +28,8 @@ to move zero rows onto the z-scored scale.
 
 ## Convert IITB V2
 
-Download CMCL pretraining CSVs into the workspace:
+If the CSVs are not already present, download CMCL pretraining CSVs into the
+workspace:
 
 ```bash
 bash emotion_et_prediction/scripts/download_cmcl_data.sh
@@ -37,9 +39,9 @@ bash emotion_et_prediction/scripts/download_cmcl_data.sh
 python -m emotion_et_prediction.emotion_et.preprocess_iitb \
   --fixation-csv data/iitb_sentiment_gaze_raw/extracted/v2/Eye-tracking_and_SA-II_released_dataset/Fixation_sequence.csv \
   --text-csv data/iitb_sentiment_gaze_raw/extracted/v2/Eye-tracking_and_SA-II_released_dataset/text_and_annorations.csv \
-  --output-csv emotion_et_prediction/artifacts/iitb_v2_cmcl_scaled.csv \
-  --raw-output-csv emotion_et_prediction/artifacts/iitb_v2_raw_word_features.csv \
-  --stats-json emotion_et_prediction/artifacts/iitb_v2_preprocess_stats.json
+  --output-csv emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv \
+  --raw-output-csv emotion_et_prediction/data/finetune_data/iitb_v2_raw_word_features.csv \
+  --stats-json emotion_et_prediction/data/finetune_data/iitb_v2_preprocess_stats.json
 ```
 
 ## Train
@@ -50,9 +52,9 @@ Use the Hugging Face backend for the real model:
 python -m emotion_et_prediction.emotion_et.train_et \
   --backend hf \
   --model-name roberta-base \
-  --pretrain-csv data/cmcl/provo.csv \
-  --pretrain-csv data/cmcl/train_and_valid.csv \
-  --finetune-csv emotion_et_prediction/artifacts/iitb_v2_cmcl_scaled.csv \
+  --pretrain-csv emotion_et_prediction/data/pretrain_data/provo.csv \
+  --pretrain-csv emotion_et_prediction/data/pretrain_data/train_and_valid.csv \
+  --finetune-csv emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv \
   --output-dir emotion_et_prediction/runs/cmcl_to_iitb_roberta \
   --pretrain-epochs 100 \
   --finetune-epochs 20 \

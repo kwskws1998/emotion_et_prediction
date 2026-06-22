@@ -19,8 +19,18 @@ git remote add origin https://github.com/<github-user>/emotion_et_prediction.git
 git push -u origin main
 ```
 
-Do not commit `runs/`, `artifacts/`, or `data/`. They are ignored because
-checkpoints and datasets should not live in the source repository.
+Do not commit `runs/` or raw datasets. This repository is configured to include
+the small processed files needed to start training immediately:
+
+```text
+data/pretrain_data/provo.csv
+data/pretrain_data/train_and_valid.csv
+data/pretrain_data/train.csv
+data/pretrain_data/valid.csv
+data/finetune_data/iitb_v2_cmcl_scaled.csv
+data/finetune_data/iitb_v2_raw_word_features.csv
+data/finetune_data/iitb_v2_preprocess_stats.json
+```
 
 ## 2. Prepare the Cloud GPU Server
 
@@ -68,33 +78,33 @@ Do not commit the token.
 
 ## 4. Prepare Data on the Server
 
-Download CMCL Provo/ZuCo-style pretraining CSVs:
-
-```bash
-bash emotion_et_prediction/scripts/download_cmcl_data.sh
-```
-
-Place the processed IITB CSV here:
+CMCL Provo/ZuCo-style pretraining CSVs should already be in:
 
 ```text
-emotion_et_prediction/artifacts/iitb_v2_cmcl_scaled.csv
+emotion_et_prediction/data/pretrain_data/
 ```
 
-Two practical ways:
+The processed IITB fine-tuning CSV should already be here:
+
+```text
+emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv
+```
+
+If any file is missing, copy it from local or download it again. For example:
 
 ```bash
-mkdir -p emotion_et_prediction/artifacts
-scp <local-path>/iitb_v2_cmcl_scaled.csv <server>:~/emotion_et_prediction/artifacts/
+mkdir -p emotion_et_prediction/data/finetune_data
+scp <local-path>/iitb_v2_cmcl_scaled.csv <server>:~/emotion_et_prediction/data/finetune_data/
 ```
 
 or download it from a private Hugging Face dataset repo:
 
 ```bash
-mkdir -p emotion_et_prediction/artifacts
+mkdir -p emotion_et_prediction/data/finetune_data
 hf download <hf-user>/iitb-v2-emotion-et-cmcl \
   iitb_v2_cmcl_scaled.csv \
   --type dataset \
-  --local-dir emotion_et_prediction/artifacts
+  --local-dir emotion_et_prediction/data/finetune_data
 ```
 
 ## 5. Create the Hugging Face Model Repo

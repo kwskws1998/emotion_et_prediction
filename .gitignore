@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
-artifacts/
-data/
 runs/
+artifacts/
+
+data/*
+!data/pretrain_data/
+!data/pretrain_data/*.csv
+!data/finetune_data/
+!data/finetune_data/*.csv
+!data/finetune_data/*.json
