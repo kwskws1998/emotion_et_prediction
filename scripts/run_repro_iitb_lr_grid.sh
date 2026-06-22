@@ -37,17 +37,24 @@ lr = sys.argv[2]
 output_dir = sys.argv[3]
 payload = json.loads(metrics_path.read_text())
 mae = payload["valid_mae"]
+score = payload["selected_score"]
+nfix = mae["nFix"]
+ffd = mae["FFD"]
+gpt = mae["GPT"]
+trt = mae["TRT"]
+fixprop = mae["fixProp"]
+all_mae = mae["all"]
 fields = [
     lr,
     str(payload["epoch"]),
     payload["selected_metric"],
-    f"{payload['selected_score']:.6f}",
-    f"{mae['nFix']:.6f}",
-    f"{mae['FFD']:.6f}",
-    f"{mae['GPT']:.6f}",
-    f"{mae['TRT']:.6f}",
-    f"{mae['fixProp']:.6f}",
-    f"{mae['all']:.6f}",
+    f"{score:.6f}",
+    f"{nfix:.6f}",
+    f"{ffd:.6f}",
+    f"{gpt:.6f}",
+    f"{trt:.6f}",
+    f"{fixprop:.6f}",
+    f"{all_mae:.6f}",
     output_dir,
 ]
 print("\t".join(fields))
