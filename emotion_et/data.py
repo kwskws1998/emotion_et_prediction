@@ -109,11 +109,26 @@ class SimpleVocab:
 class SimpleETDataset(torch.utils.data.Dataset):
     """Whitespace-token ET dataset used for offline smoke tests."""
 
-    def __init__(self, df: pd.DataFrame, vocab: SimpleVocab, max_length: int = 128):
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        vocab: SimpleVocab,
+        max_length: int = 128,
+        pad_to_dataset_max: bool = False,
+    ):
         self.df = renumber_sentences(df)
         self.vocab = vocab
         self.max_length = max_length
         self.sentence_ids = self.df["sentence_id"].drop_duplicates().tolist()
+        self.pad_to_length = self._compute_pad_to_length() if pad_to_dataset_max else None
+
+    def _sentence_words(self, sentence_id: int) -> list[str]:
+        rows = self.df[self.df["sentence_id"].eq(sentence_id)].sort_values("word_id")
+        return rows["word"].map(_clean_word).tolist()
+
+    def _compute_pad_to_length(self) -> int:
+        lengths = [len(self.vocab.encode(self._sentence_words(sentence_id), self.max_length)) for sentence_id in self.sentence_ids]
+        return max(lengths) if lengths else 0
 
     def __len__(self) -> int:
         return len(self.sentence_ids)
@@ -121,7 +136,7 @@ class SimpleETDataset(torch.utils.data.Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         sentence_id = self.sentence_ids[index]
         rows = self.df[self.df["sentence_id"].eq(sentence_id)].sort_values("word_id")
-        words = rows["word"].map(_clean_word).tolist()
+        words = self._sentence_words(sentence_id)
         features_np = rows[FEATURE_NAMES].to_numpy(dtype=np.float32)
         input_ids = self.vocab.encode(words, max_length=self.max_length)
         attention_mask = [1] * len(input_ids)
@@ -138,11 +153,36 @@ class SimpleETDataset(torch.utils.data.Dataset):
 class HFEyeTrackingDataset(torch.utils.data.Dataset):
     """Hugging Face tokenizer dataset matching the second ET predictor contract."""
 
-    def __init__(self, df: pd.DataFrame, tokenizer, max_length: int = 512):
+    def __init__(
+        self,
+        df: pd.DataFrame,
+        tokenizer,
+        max_length: int = 512,
+        pad_to_dataset_max: bool = False,
+    ):
         self.df = renumber_sentences(df)
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.sentence_ids = self.df["sentence_id"].drop_duplicates().tolist()
+        self.pad_to_length = self._compute_pad_to_length() if pad_to_dataset_max else None
+
+    def _sentence_words(self, sentence_id: int) -> list[str]:
+        rows = self.df[self.df["sentence_id"].eq(sentence_id)].sort_values("word_id")
+        return rows["word"].map(_clean_word).tolist()
+
+    def _compute_pad_to_length(self) -> int:
+        lengths = []
+        for sentence_id in self.sentence_ids:
+            encoded = self.tokenizer(
+                self._sentence_words(sentence_id),
+                is_split_into_words=True,
+                truncation=True,
+                max_length=self.max_length,
+                padding=False,
+                return_tensors=None,
+            )
+            lengths.append(len(encoded["input_ids"]))
+        return max(lengths) if lengths else 0
 
     def __len__(self) -> int:
         return len(self.sentence_ids)
@@ -150,7 +190,7 @@ class HFEyeTrackingDataset(torch.utils.data.Dataset):
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         sentence_id = self.sentence_ids[index]
         rows = self.df[self.df["sentence_id"].eq(sentence_id)].sort_values("word_id")
-        words = rows["word"].map(_clean_word).tolist()
+        words = self._sentence_words(sentence_id)
         features_np = rows[FEATURE_NAMES].to_numpy(dtype=np.float32)
 
         encoded = self.tokenizer(
@@ -177,8 +217,14 @@ class HFEyeTrackingDataset(torch.utils.data.Dataset):
         }
 
 
-def collate_et_batch(batch: list[dict[str, torch.Tensor]], pad_id: int = 0) -> dict[str, torch.Tensor]:
+def collate_et_batch(
+    batch: list[dict[str, torch.Tensor]],
+    pad_id: int = 0,
+    pad_to_length: int | None = None,
+) -> dict[str, torch.Tensor]:
     max_len = max(item["input_ids"].shape[0] for item in batch)
+    if pad_to_length is not None:
+        max_len = max(max_len, pad_to_length)
     batch_size = len(batch)
     input_ids = torch.full((batch_size, max_len), pad_id, dtype=torch.long)
     attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)

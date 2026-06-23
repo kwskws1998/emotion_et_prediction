@@ -55,6 +55,20 @@ def masked_mse(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor
     return torch.nn.functional.mse_loss(predictions[mask], targets[mask])
 
 
+def notebook_mse(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    mask = target_mask(targets)
+    predictions = predictions.masked_fill(~mask.unsqueeze(-1), -1.0)
+    return torch.nn.functional.mse_loss(predictions, targets)
+
+
+def training_loss(predictions: torch.Tensor, targets: torch.Tensor, loss_mode: str) -> torch.Tensor:
+    if loss_mode == "target":
+        return masked_mse(predictions, targets)
+    if loss_mode == "notebook":
+        return notebook_mse(predictions, targets)
+    raise ValueError(f"Unsupported loss mode: {loss_mode}")
+
+
 def compute_mae(predictions: np.ndarray, targets: np.ndarray) -> dict[str, float]:
     values = {
         feature: float(np.abs(predictions[:, index] - targets[:, index]).mean())
@@ -152,27 +166,49 @@ def make_loader(
     batch_size: int,
     max_length: int,
     shuffle: bool,
+    pad_mode: str,
     vocab: SimpleVocab | None = None,
     tokenizer=None,
 ) -> torch.utils.data.DataLoader:
+    pad_to_dataset_max = pad_mode == "dataset"
     if backend == "tiny":
         if vocab is None:
             raise ValueError("Tiny backend requires a SimpleVocab.")
-        dataset = SimpleETDataset(df, vocab=vocab, max_length=max_length)
+        dataset = SimpleETDataset(
+            df,
+            vocab=vocab,
+            max_length=max_length,
+            pad_to_dataset_max=pad_to_dataset_max,
+        )
         pad_id = vocab.pad_id
     elif backend == "hf":
         if tokenizer is None:
             raise ValueError("HF backend requires a tokenizer.")
-        dataset = HFEyeTrackingDataset(df, tokenizer=tokenizer, max_length=max_length)
+        dataset = HFEyeTrackingDataset(
+            df,
+            tokenizer=tokenizer,
+            max_length=max_length,
+            pad_to_dataset_max=pad_to_dataset_max,
+        )
         pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
     else:
         raise ValueError(f"Unsupported backend: {backend}")
+    if pad_mode == "max-length":
+        pad_to_length = max_length
+    elif pad_mode == "dataset":
+        pad_to_length = dataset.pad_to_length
+    else:
+        pad_to_length = None
 
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
-        collate_fn=lambda batch: collate_et_batch(batch, pad_id=pad_id),
+        collate_fn=lambda batch: collate_et_batch(
+            batch,
+            pad_id=pad_id,
+            pad_to_length=pad_to_length,
+        ),
     )
 
 
@@ -181,6 +217,7 @@ def train_one_epoch(
     loader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
+    loss_mode: str,
 ) -> float:
     model.train()
     losses: list[float] = []
@@ -190,7 +227,7 @@ def train_one_epoch(
         attention_mask = batch["attention_mask"].to(device)
         targets = batch["features"].to(device)
         predictions = model(input_ids=input_ids, attention_mask=attention_mask)
-        loss = masked_mse(predictions, targets)
+        loss = training_loss(predictions, targets, loss_mode)
         loss.backward()
         optimizer.step()
         losses.append(float(loss.detach().cpu()))
@@ -228,6 +265,7 @@ def run_stage(
     epochs: int,
     lr: float,
     label: str,
+    loss_mode: str,
     valid_loader: torch.utils.data.DataLoader | None = None,
     on_epoch_end=None,
 ) -> list[dict[str, object]]:
@@ -237,12 +275,13 @@ def run_stage(
     )
     logs: list[dict[str, object]] = []
     for epoch in range(1, epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, device)
+        train_loss = train_one_epoch(model, train_loader, optimizer, device, loss_mode)
         metrics = evaluate(model, valid_loader, device) if valid_loader is not None else None
         log_row = {
             "stage": label,
             "epoch": epoch,
             "train_loss": train_loss,
+            "loss_mode": loss_mode,
             "valid_mae": metrics,
         }
         logs.append(log_row)
@@ -311,6 +350,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freeze-encoder", action="store_true")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--best-metric", choices=[*FEATURE_NAMES, "all"], default="all")
+    parser.add_argument("--loss-mode", choices=["notebook", "target"], default="notebook")
+    parser.add_argument("--pad-mode", choices=["batch", "dataset", "max-length"], default="dataset")
     parser.add_argument("--max-pretrain-sentences", type=int, default=None)
     parser.add_argument("--max-finetune-train-sentences", type=int, default=None)
     parser.add_argument("--max-valid-sentences", type=int, default=None)
@@ -355,6 +396,10 @@ def main() -> None:
         local_files_only=args.local_files_only,
     )
     model.to(device)
+    print(f"Device: {device}")
+    print(f"Loss mode: {args.loss_mode}")
+    print(f"Pad mode: {args.pad_mode}")
+    print(f"Output dir: {args.output_dir}")
 
     valid_loader = make_loader(
         valid_df,
@@ -362,6 +407,7 @@ def main() -> None:
         batch_size=args.batch_size,
         max_length=args.max_length,
         shuffle=False,
+        pad_mode=args.pad_mode,
         vocab=vocab,
         tokenizer=tokenizer,
     )
@@ -374,6 +420,7 @@ def main() -> None:
             batch_size=args.batch_size,
             max_length=args.max_length,
             shuffle=True,
+            pad_mode=args.pad_mode,
             vocab=vocab,
             tokenizer=tokenizer,
         )
@@ -385,6 +432,7 @@ def main() -> None:
                 epochs=args.pretrain_epochs,
                 lr=args.lr,
                 label="pretrain",
+                loss_mode=args.loss_mode,
                 valid_loader=None,
             )
         )
@@ -395,6 +443,7 @@ def main() -> None:
         batch_size=args.batch_size,
         max_length=args.max_length,
         shuffle=True,
+        pad_mode=args.pad_mode,
         vocab=vocab,
         tokenizer=tokenizer,
     )
@@ -442,6 +491,7 @@ def main() -> None:
             epochs=args.finetune_epochs,
             lr=args.lr,
             label="finetune",
+            loss_mode=args.loss_mode,
             valid_loader=valid_loader,
             on_epoch_end=save_best_if_needed,
         )
