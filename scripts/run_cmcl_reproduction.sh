@@ -17,8 +17,9 @@ SEED="${SEED:-42}"
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
 cd "$WORK_DIR"
+export PYTHONPATH="$PACKAGE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
-python -m emotion_et_prediction.emotion_et.reproduce_et2 \
+python -m emotion_et.reproduce_et2 \
   --seeds "$SEED" \
   --model-name "$MODEL_NAME" \
   --provo-csv "$PROVO_CSV" \

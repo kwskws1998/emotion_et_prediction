@@ -2,8 +2,8 @@
 set -euo pipefail
 
 MODEL_NAME="${MODEL_NAME:-roberta-base}"
-IITB_CSV="${IITB_CSV:-emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv}"
-OUTPUT_DIR="${OUTPUT_DIR:-emotion_et_prediction/runs/cmcl_to_iitb_roberta}"
+IITB_CSV="${IITB_CSV:-emotion_et_prediction/data/finetune_data/iitb_sa1_sa2_cmcl_scaled.csv}"
+OUTPUT_DIR="${OUTPUT_DIR:-emotion_et_prediction/runs/cmcl_to_iitb_augmented_roberta}"
 PRETRAIN_EPOCHS="${PRETRAIN_EPOCHS:-100}"
 FINETUNE_EPOCHS="${FINETUNE_EPOCHS:-150}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
@@ -16,8 +16,9 @@ SEED="${SEED:-42}"
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
 cd "$WORK_DIR"
+export PYTHONPATH="$PACKAGE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
-python -m emotion_et_prediction.emotion_et.train_et \
+python -m emotion_et.train_et \
   --backend hf \
   --model-name "$MODEL_NAME" \
   --pretrain-csv emotion_et_prediction/data/pretrain_data/provo.csv \
@@ -33,7 +34,10 @@ python -m emotion_et_prediction.emotion_et.train_et \
   --best-metric "$BEST_METRIC" \
   --seed "$SEED"
 
-if [[ -n "${HF_MODEL_REPO:-}" ]]; then
+if [[ -n "${HF_MODEL_REPO:-}" && "${UPLOAD_RAW_RUN:-0}" == "1" ]]; then
   hf upload "$HF_MODEL_REPO" "$OUTPUT_DIR" . --type model \
-    --commit-message "Add CMCL-pretrained IITB-finetuned ET predictor"
+    --commit-message "Add raw CMCL-pretrained IITB-finetuned ET predictor run"
+elif [[ -n "${HF_MODEL_REPO:-}" ]]; then
+  echo "HF_MODEL_REPO is set, but raw run upload is disabled."
+  echo "Use scripts/train_package_upload_augmented.sh or scripts/package_hf_model.sh to upload the Hugging Face bundle."
 fi

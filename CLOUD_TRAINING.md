@@ -27,6 +27,8 @@ data/pretrain_data/provo.csv
 data/pretrain_data/train_and_valid.csv
 data/pretrain_data/train.csv
 data/pretrain_data/valid.csv
+data/finetune_data/iitb_sa1_sa2_cmcl_scaled.csv
+data/finetune_data/iitb_sa1_sa2_preprocess_stats.json
 data/finetune_data/iitb_v2_cmcl_scaled.csv
 data/finetune_data/iitb_v2_raw_word_features.csv
 data/finetune_data/iitb_v2_preprocess_stats.json
@@ -84,25 +86,25 @@ CMCL Provo/ZuCo-style pretraining CSVs should already be in:
 emotion_et_prediction/data/pretrain_data/
 ```
 
-The processed IITB fine-tuning CSV should already be here:
+The final processed IITB fine-tuning CSV should already be here:
 
 ```text
-emotion_et_prediction/data/finetune_data/iitb_v2_cmcl_scaled.csv
+emotion_et_prediction/data/finetune_data/iitb_sa1_sa2_cmcl_scaled.csv
 ```
 
 If any file is missing, copy it from local or download it again. For example:
 
 ```bash
 mkdir -p emotion_et_prediction/data/finetune_data
-scp <local-path>/iitb_v2_cmcl_scaled.csv <server>:~/emotion_et_prediction/data/finetune_data/
+scp <local-path>/iitb_sa1_sa2_cmcl_scaled.csv <server>:~/emotion_et_prediction/data/finetune_data/
 ```
 
 or download it from a private Hugging Face dataset repo:
 
 ```bash
 mkdir -p emotion_et_prediction/data/finetune_data
-hf download <hf-user>/iitb-v2-emotion-et-cmcl \
-  iitb_v2_cmcl_scaled.csv \
+hf download <hf-user>/iitb-sa1-sa2-emotion-et-cmcl \
+  iitb_sa1_sa2_cmcl_scaled.csv \
   --type dataset \
   --local-dir emotion_et_prediction/data/finetune_data
 ```
@@ -122,23 +124,22 @@ Remove `--private` if the model should be public.
 
 ## 6. Train and Upload From the Server
 
-This runs CMCL pretraining first, then IITB emotion-domain fine-tuning, then
-uploads the output directory to the Hugging Face model repo.
+This runs CMCL pretraining first, then augmented IITB emotion-domain
+fine-tuning, packages the Hugging Face bundle, then uploads the bundle to the
+model repo.
 
 ```bash
 PRETRAIN_EPOCHS=100 \
 FINETUNE_EPOCHS=150 \
 BATCH_SIZE=16 \
-MAX_LENGTH=256 \
+REPRO_MAX_LENGTH=512 \
 DEVICE=cuda \
-BEST_METRIC=all \
 HF_MODEL_REPO=<hf-user>/emotion-et-predictor-roberta \
-bash emotion_et_prediction/scripts/train_cmcl_to_iitb.sh
+bash emotion_et_prediction/scripts/train_package_upload_augmented.sh
 ```
 
-The run saves `checkpoint_best.pt`, `checkpoint_last.pt`, and `checkpoint.pt`.
-`checkpoint.pt` points to the best validation checkpoint. Set `BEST_METRIC=TRT`
-if TRT MAE should select the best checkpoint.
+The run saves `et_predictor2_seed42.safetensors`, `metrics_best.json`, and the
+packaged Hugging Face folder under `emotion_et_prediction/hf_emotion_et_augmented`.
 
 For a cheap server smoke run:
 
@@ -146,18 +147,16 @@ For a cheap server smoke run:
 PRETRAIN_EPOCHS=1 \
 FINETUNE_EPOCHS=1 \
 BATCH_SIZE=4 \
-MAX_LENGTH=128 \
+REPRO_MAX_LENGTH=128 \
 DEVICE=cuda \
 OUTPUT_DIR=emotion_et_prediction/runs/server_smoke \
-bash emotion_et_prediction/scripts/train_cmcl_to_iitb.sh
+bash emotion_et_prediction/scripts/train_repro_cmcl_to_iitb.sh
 ```
 
-To upload an already finished run manually:
+To package and upload an already finished run manually:
 
 ```bash
-hf upload <hf-user>/emotion-et-predictor-roberta \
-  emotion_et_prediction/runs/cmcl_to_iitb_roberta \
-  . \
-  --type model \
-  --commit-message "Upload trained emotion ET predictor"
+RUN_DIR=emotion_et_prediction/runs/repro_cmcl_to_iitb_augmented_roberta \
+HF_MODEL_REPO=<hf-user>/emotion-et-predictor-roberta \
+bash emotion_et_prediction/scripts/package_hf_model.sh
 ```

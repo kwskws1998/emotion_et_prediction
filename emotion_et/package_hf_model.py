@@ -5,18 +5,27 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
 
 from transformers import AutoTokenizer, RobertaConfig
 
-DEFAULT_RUN_DIR = Path("emotion_et_prediction/runs/repro_main_20260622_121533")
-DEFAULT_OUTPUT_DIR = Path("emotion_et_prediction/hf_emotion_et_iitb_lr5e5")
-DEFAULT_ZIP_PATH = Path("emotion_et_prediction/hf_emotion_et_iitb_lr5e5_upload.zip")
-DEFAULT_WEIGHT_NAME = "et_predictor2_iitb_lr5e5_seed42.safetensors"
-SOURCE_WEIGHT_NAME = "et_predictor2_seed42.safetensors"
+DEFAULT_RUN_DIR = Path("emotion_et_prediction/runs/repro_cmcl_to_iitb_augmented_roberta")
+DEFAULT_OUTPUT_DIR = Path("emotion_et_prediction/hf_emotion_et_augmented")
+DEFAULT_ZIP_PATH = Path("emotion_et_prediction/hf_emotion_et_augmented_upload.zip")
+DEFAULT_WEIGHT_NAME = "et_predictor2_seed42.safetensors"
 FEATURE_NAMES = ["nFix", "FFD", "GPT", "TRT", "fixProp"]
+SUMMARY_FIELDS = [
+    "lr",
+    "best_epoch",
+    "selected_metric",
+    "selected_score",
+    *FEATURE_NAMES,
+    "all",
+    "output_dir",
+]
 
 
 def write_compat_tokenizer_files(output_dir: Path, model_name: str, local_files_only: bool) -> None:
@@ -72,7 +81,86 @@ def read_lr_summary(summary_path: Path) -> dict[str, str]:
     return min(rows, key=lambda row: float(row["selected_score"]))
 
 
+def metric_to_string(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    return f"{float(value):.6f}"
+
+
+def read_metric_for_readme(best_row: dict[str, str], key: str) -> str:
+    value = best_row.get(key)
+    if value is None or value == "":
+        return "n/a"
+    return f"{float(value):.6f}"
+
+
+def build_metric_row(metrics_path: Path, run_dir: Path, lr_label: str) -> dict[str, str]:
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    valid_mae = payload.get("valid_mae", {})
+    selected_score = payload.get("selected_score", valid_mae.get("all"))
+    row = {
+        "lr": lr_label,
+        "best_epoch": str(payload.get("epoch", "")),
+        "selected_metric": str(payload.get("selected_metric", "all")),
+        "selected_score": metric_to_string(selected_score),
+        "all": metric_to_string(valid_mae.get("all")),
+        "output_dir": str(run_dir),
+    }
+    for feature in FEATURE_NAMES:
+        row[feature] = metric_to_string(valid_mae.get(feature))
+    return row
+
+
+def write_single_run_summary(output_dir: Path, best_row: dict[str, str]) -> None:
+    with (output_dir / "lr_grid_summary.tsv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS, delimiter="\t")
+        writer.writeheader()
+        writer.writerow({field: best_row.get(field, "") for field in SUMMARY_FIELDS})
+
+
+def find_source_weight(run_dir: Path, requested_weight_name: str) -> Path:
+    candidates = [run_dir / requested_weight_name, *sorted(run_dir.glob("et_predictor2_seed*.safetensors"))]
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        f"No safetensors weight found in {run_dir}. "
+        "Expected et_predictor2_seed*.safetensors from scripts/train_repro_cmcl_to_iitb.sh."
+    )
+
+
+def find_metrics_file(run_dir: Path) -> Path:
+    for filename in ("metrics_best.json", "metrics.json"):
+        candidate = run_dir / filename
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Missing metrics_best.json or metrics.json in {run_dir}")
+
+
+def copy_or_write_manifest(run_dir: Path, output_dir: Path, weight_name: str, best_row: dict[str, str]) -> None:
+    source = run_dir / "manifest.env"
+    if source.exists():
+        shutil.copy2(source, output_dir / "manifest.env")
+        return
+
+    lines = [
+        f"RUN_DIR={run_dir}",
+        f"WEIGHT_NAME={weight_name}",
+        f"BEST_LR={best_row.get('lr', '')}",
+        f"BEST_EPOCH={best_row.get('best_epoch', '')}",
+        f"SELECTED_METRIC={best_row.get('selected_metric', '')}",
+        f"SELECTED_SCORE={best_row.get('selected_score', '')}",
+        "FINETUNE_CSV=emotion_et_prediction/data/finetune_data/iitb_sa1_sa2_cmcl_scaled.csv",
+    ]
+    (output_dir / "manifest.env").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_readme(output_dir: Path, best_row: dict[str, str], weight_name: str) -> None:
+    best_lr = best_row.get("lr") or "n/a"
     readme = f"""---
 library_name: transformers
 base_model: roberta-base
@@ -84,7 +172,7 @@ tags:
 - iitb
 ---
 
-# Emotion-specific ET Predictor 2: CMCL -> IITB
+# Emotion-specific ET Predictor 2: CMCL -> IITB SA-I/SA-II
 
 This repository contains a RoBERTa-base token-level eye-tracking feature predictor.
 
@@ -99,21 +187,34 @@ This repository contains a RoBERTa-base token-level eye-tracking feature predict
 ## Training
 
 - Pretraining data: Provo + ZuCo train_and_valid from the CMCL-style ET Predictor 2 setup
-- Fine-tuning data: IITB V2 sentiment gaze, CMCL-scaled
+- Fine-tuning data: IITB SA-II plus non-duplicate CFILT/IITB SA-I sentiment snippets, CMCL-scaled
 - Seed: 42
-- Best LR: {best_row["lr"]}
+- Best LR: {best_lr}
 - Max length: 512
 
 ## Validation MAE on IITB split
 
 | Feature | MAE |
 |---|---:|
-| nFix | {float(best_row["nFix"]):.6f} |
-| FFD | {float(best_row["FFD"]):.6f} |
-| GPT | {float(best_row["GPT"]):.6f} |
-| TRT | {float(best_row["TRT"]):.6f} |
-| fixProp | {float(best_row["fixProp"]):.6f} |
-| all | {float(best_row["all"]):.6f} |
+| nFix | {read_metric_for_readme(best_row, "nFix")} |
+| FFD | {read_metric_for_readme(best_row, "FFD")} |
+| GPT | {read_metric_for_readme(best_row, "GPT")} |
+| TRT | {read_metric_for_readme(best_row, "TRT")} |
+| fixProp | {read_metric_for_readme(best_row, "fixProp")} |
+| all | {read_metric_for_readme(best_row, "all")} |
+
+## Bundle Files
+
+The export includes the files expected by downstream ET/VAD pipelines:
+
+```text
+.gitattributes
+README.md
+model.py
+tokenizer.json
+tokenizer_config.json
+{weight_name}
+```
 
 ## Usage
 
@@ -140,32 +241,53 @@ def write_gitattributes(output_dir: Path) -> None:
     )
 
 
-def copy_required_files(run_dir: Path, output_dir: Path, weight_name: str) -> dict[str, str]:
+def copy_required_files(
+    run_dir: Path,
+    output_dir: Path,
+    weight_name: str,
+    lr_label: str,
+) -> dict[str, str]:
     lr_summary_path = run_dir / "lr_grid" / "summary.tsv"
-    best_row = read_lr_summary(lr_summary_path)
-    summary_output_dir = Path(best_row["output_dir"])
-    safe_lr = best_row["lr"].replace(".", "p").replace("-", "_")
-    candidates = [
-        summary_output_dir,
-        Path.cwd() / summary_output_dir,
-        run_dir / "lr_grid" / f"lr_{safe_lr}",
-    ]
-    best_dir = next((candidate for candidate in candidates if candidate.exists()), candidates[-1])
+    if lr_summary_path.exists():
+        best_row = read_lr_summary(lr_summary_path)
+        summary_output_dir = Path(best_row["output_dir"])
+        safe_lr = best_row["lr"].replace(".", "p").replace("-", "_")
+        candidates = [
+            summary_output_dir,
+            Path.cwd() / summary_output_dir,
+            run_dir / "lr_grid" / f"lr_{safe_lr}",
+        ]
+        best_dir = next((candidate for candidate in candidates if candidate.exists()), candidates[-1])
+        metrics_path = find_metrics_file(best_dir)
+        source_weight = find_source_weight(best_dir, weight_name)
 
-    source_weight = best_dir / SOURCE_WEIGHT_NAME
-    if not source_weight.exists():
-        raise FileNotFoundError(f"Missing source weight: {source_weight}")
+        shutil.copy2(source_weight, output_dir / weight_name)
+        shutil.copy2(metrics_path, output_dir / "metrics_best.json")
+        shutil.copy2(lr_summary_path, output_dir / "lr_grid_summary.tsv")
+        copy_or_write_manifest(run_dir, output_dir, weight_name, best_row)
+        return best_row
+
+    metrics_path = find_metrics_file(run_dir)
+    best_row = build_metric_row(metrics_path, run_dir, lr_label=lr_label)
+    source_weight = find_source_weight(run_dir, weight_name)
 
     shutil.copy2(source_weight, output_dir / weight_name)
-    shutil.copy2(best_dir / "metrics_best.json", output_dir / "metrics_best.json")
-    shutil.copy2(lr_summary_path, output_dir / "lr_grid_summary.tsv")
-    shutil.copy2(run_dir / "manifest.env", output_dir / "manifest.env")
+    shutil.copy2(metrics_path, output_dir / "metrics_best.json")
+    write_single_run_summary(output_dir, best_row)
+    copy_or_write_manifest(run_dir, output_dir, weight_name, best_row)
     return best_row
 
 
-def copy_model_wrapper(output_dir: Path) -> None:
+def copy_model_wrapper(output_dir: Path, weight_name: str) -> None:
     source = Path(__file__).with_name("hf_model.py")
-    shutil.copy2(source, output_dir / "model.py")
+    wrapper = source.read_text(encoding="utf-8")
+    wrapper = re.sub(
+        r'DEFAULT_WEIGHT = ".*?"',
+        f'DEFAULT_WEIGHT = "{weight_name}"',
+        wrapper,
+        count=1,
+    )
+    (output_dir / "model.py").write_text(wrapper, encoding="utf-8")
 
 
 def zip_directory(output_dir: Path, zip_path: Path) -> None:
@@ -189,8 +311,8 @@ def package_hf_model(args: argparse.Namespace) -> None:
         model_name=args.model_name,
         local_files_only=args.local_files_only,
     )
-    best_row = copy_required_files(args.run_dir, output_dir, args.weight_name)
-    copy_model_wrapper(output_dir)
+    best_row = copy_required_files(args.run_dir, output_dir, args.weight_name, lr_label=args.lr_label)
+    copy_model_wrapper(output_dir, args.weight_name)
     write_readme(output_dir, best_row, args.weight_name)
     write_gitattributes(output_dir)
 
@@ -211,6 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--zip-path", type=Path, default=DEFAULT_ZIP_PATH)
     parser.add_argument("--weight-name", type=str, default=DEFAULT_WEIGHT_NAME)
     parser.add_argument("--model-name", type=str, default="roberta-base")
+    parser.add_argument("--lr-label", type=str, default="5e-5")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()

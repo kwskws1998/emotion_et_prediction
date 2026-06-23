@@ -44,10 +44,13 @@ class EyeTrackingCSV(torch.utils.data.Dataset):
             text = [word for word in text if word]
             self.texts.append(text)
 
-        self.tokenizer = transformers.RobertaTokenizer.from_pretrained(
+        self.tokenizer = transformers.AutoTokenizer.from_pretrained(
             model_name,
             add_prefix_space=True,
+            use_fast=True,
         )
+        if not self.tokenizer.is_fast:
+            raise TypeError(f"{model_name} must resolve to a fast tokenizer for offset mapping.")
         self.ids = self.tokenizer(
             self.texts,
             padding=True,
@@ -160,6 +163,14 @@ def split_by_sentence(
     train_df = clean[~clean["sentence_id"].isin(valid_ids)]
     valid_df = clean[clean["sentence_id"].isin(valid_ids)]
     return renumber_dataframe(train_df), renumber_dataframe(valid_df)
+
+
+def limit_sentences(df: pd.DataFrame, max_sentences: int | None) -> pd.DataFrame:
+    clean = renumber_dataframe(df)
+    if max_sentences is None:
+        return clean
+    keep_ids = set(clean["sentence_id"].drop_duplicates().head(max_sentences).tolist())
+    return renumber_dataframe(clean[clean["sentence_id"].isin(keep_ids)])
 
 
 def compute_mae(predict_df: pd.DataFrame, truth_df: pd.DataFrame) -> dict[str, float]:
@@ -411,6 +422,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-length", type=int, default=512)
+    parser.add_argument("--max-pretrain-sentences", type=int, default=None)
+    parser.add_argument("--max-finetune-train-sentences", type=int, default=None)
+    parser.add_argument("--max-valid-sentences", type=int, default=None)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--pretrain-label", type=str, default="Provo")
     parser.add_argument("--finetune-label", type=str, default="ZuCo")
@@ -426,6 +440,7 @@ def main() -> None:
     train_source = args.finetune_csv if args.finetune_csv is not None else args.train_csv
     pretrain_df = load_csvs(pretrain_paths)
     finetune_df = renumber_dataframe(pd.read_csv(train_source))
+    pretrain_df = limit_sentences(pretrain_df, args.max_pretrain_sentences)
     if args.valid_csv is None:
         train_df, valid_df = split_by_sentence(
             finetune_df,
@@ -435,6 +450,8 @@ def main() -> None:
     else:
         train_df = finetune_df
         valid_df = renumber_dataframe(pd.read_csv(args.valid_csv))
+    train_df = limit_sentences(train_df, args.max_finetune_train_sentences)
+    valid_df = limit_sentences(valid_df, args.max_valid_sentences)
 
     print(f"Train: {len(train_df)} words, Valid: {len(valid_df)} words, Pretrain: {len(pretrain_df)} words", flush=True)
     print(f"Seeds: {seeds}", flush=True)

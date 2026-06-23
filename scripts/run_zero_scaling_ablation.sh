@@ -11,6 +11,7 @@ PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
 TRAIN_SCRIPT="$PACKAGE_DIR/scripts/train_cmcl_to_iitb.sh"
 cd "$WORK_DIR"
+export PYTHONPATH="$PACKAGE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
 mkdir -p "$GENERATED_DATA_DIR"
 DATA_SUMMARY_PATH="$RUN_ROOT/data_summary.tsv"
@@ -23,12 +24,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from emotion_et_prediction.emotion_et.constants import (
+from emotion_et.constants import (
     CMCL_NONZERO_TARGET_STATS,
     CMCL_TARGET_STATS,
     FEATURE_NAMES,
 )
-from emotion_et_prediction.emotion_et.preprocess_iitb import (
+from emotion_et.preprocess_iitb import (
     scale_features_to_cmcl,
     summarize_features,
 )

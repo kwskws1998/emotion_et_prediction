@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, RobertaConfig, RobertaModel
 
 FEATURE_NAMES = ["nFix", "FFD", "GPT", "TRT", "fixProp"]
 TRT_INDEX = 3
-DEFAULT_WEIGHT = "et_predictor2_iitb_lr5e5_seed42.safetensors"
+DEFAULT_WEIGHT = "et_predictor2_seed42.safetensors"
 
 
 class RobertaRegressionModel(torch.nn.Module):
