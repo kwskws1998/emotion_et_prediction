@@ -10,6 +10,8 @@ import shutil
 import zipfile
 from pathlib import Path
 
+import torch
+from safetensors.torch import save_file as save_safetensors
 from transformers import AutoTokenizer, RobertaConfig
 
 DEFAULT_RUN_DIR = Path("emotion_et_prediction/runs/repro_cmcl_to_iitb_augmented_roberta")
@@ -118,7 +120,7 @@ def write_single_run_summary(output_dir: Path, best_row: dict[str, str]) -> None
         writer.writerow({field: best_row.get(field, "") for field in SUMMARY_FIELDS})
 
 
-def find_source_weight(run_dir: Path, requested_weight_name: str) -> Path:
+def find_source_weight(run_dir: Path, requested_weight_name: str) -> Path | None:
     candidates = [run_dir / requested_weight_name, *sorted(run_dir.glob("et_predictor2_seed*.safetensors"))]
     seen: set[Path] = set()
     for candidate in candidates:
@@ -127,10 +129,33 @@ def find_source_weight(run_dir: Path, requested_weight_name: str) -> Path:
         seen.add(candidate)
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(
-        f"No safetensors weight found in {run_dir}. "
-        "Expected et_predictor2_seed*.safetensors from scripts/train_repro_cmcl_to_iitb.sh."
-    )
+    return None
+
+
+def find_checkpoint_file(run_dir: Path) -> Path | None:
+    for filename in ("checkpoint_best.pt", "checkpoint.pt", "checkpoint_last.pt"):
+        candidate = run_dir / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def state_dict_for_export(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    exported: dict[str, torch.Tensor] = {}
+    for key, value in state_dict.items():
+        if key.startswith("encoder."):
+            exported["roberta." + key.removeprefix("encoder.")] = value
+        elif key.startswith("decoder."):
+            exported[key] = value
+    if not exported:
+        raise ValueError("Checkpoint does not contain encoder.* or decoder.* model weights.")
+    return exported
+
+
+def convert_checkpoint_to_safetensors(checkpoint_path: Path, output_path: Path) -> None:
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state_dict = payload["state_dict"] if isinstance(payload, dict) and "state_dict" in payload else payload
+    save_safetensors(state_dict_for_export(state_dict), output_path)
 
 
 def find_metrics_file(run_dir: Path) -> Path:
@@ -260,8 +285,14 @@ def copy_required_files(
         best_dir = next((candidate for candidate in candidates if candidate.exists()), candidates[-1])
         metrics_path = find_metrics_file(best_dir)
         source_weight = find_source_weight(best_dir, weight_name)
+        checkpoint_path = find_checkpoint_file(best_dir)
 
-        shutil.copy2(source_weight, output_dir / weight_name)
+        if source_weight is not None:
+            shutil.copy2(source_weight, output_dir / weight_name)
+        elif checkpoint_path is not None:
+            convert_checkpoint_to_safetensors(checkpoint_path, output_dir / weight_name)
+        else:
+            raise FileNotFoundError(f"Missing safetensors or checkpoint in {best_dir}")
         shutil.copy2(metrics_path, output_dir / "metrics_best.json")
         shutil.copy2(lr_summary_path, output_dir / "lr_grid_summary.tsv")
         copy_or_write_manifest(run_dir, output_dir, weight_name, best_row)
@@ -270,8 +301,14 @@ def copy_required_files(
     metrics_path = find_metrics_file(run_dir)
     best_row = build_metric_row(metrics_path, run_dir, lr_label=lr_label)
     source_weight = find_source_weight(run_dir, weight_name)
+    checkpoint_path = find_checkpoint_file(run_dir)
 
-    shutil.copy2(source_weight, output_dir / weight_name)
+    if source_weight is not None:
+        shutil.copy2(source_weight, output_dir / weight_name)
+    elif checkpoint_path is not None:
+        convert_checkpoint_to_safetensors(checkpoint_path, output_dir / weight_name)
+    else:
+        raise FileNotFoundError(f"Missing safetensors or checkpoint in {run_dir}")
     shutil.copy2(metrics_path, output_dir / "metrics_best.json")
     write_single_run_summary(output_dir, best_row)
     copy_or_write_manifest(run_dir, output_dir, weight_name, best_row)

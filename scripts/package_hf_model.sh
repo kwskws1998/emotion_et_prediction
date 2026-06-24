@@ -12,6 +12,25 @@ OVERWRITE="${OVERWRITE:-1}"
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="$(dirname "$PACKAGE_DIR")"
+
+resolve_path() {
+  case "$1" in
+    /*)
+      printf '%s\n' "$1"
+      ;;
+    emotion_et_prediction/*)
+      printf '%s/%s\n' "$WORK_DIR" "$1"
+      ;;
+    *)
+      printf '%s/%s\n' "$PACKAGE_DIR" "$1"
+      ;;
+  esac
+}
+
+RUN_DIR="$(resolve_path "$RUN_DIR")"
+OUTPUT_DIR="$(resolve_path "$OUTPUT_DIR")"
+ZIP_PATH="$(resolve_path "$ZIP_PATH")"
+
 cd "$WORK_DIR"
 export PYTHONPATH="$PACKAGE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 
